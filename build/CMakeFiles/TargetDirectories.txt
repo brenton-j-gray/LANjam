@@ -1,0 +1,6 @@
+D:/Code/LANjam/build/CMakeFiles/core.dir
+D:/Code/LANjam/build/CMakeFiles/lan_jam_server.dir
+D:/Code/LANjam/build/CMakeFiles/lan_jam_client.dir
+D:/Code/LANjam/build/CMakeFiles/lan_jam_client_gui.dir
+D:/Code/LANjam/build/CMakeFiles/ALL_BUILD.dir
+D:/Code/LANjam/build/CMakeFiles/ZERO_CHECK.dir

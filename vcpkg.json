@@ -1,0 +1,17 @@
+{
+  "name": "lan-jam-synth",
+  "version": "0.1.0",
+  "dependencies": [
+    "rtaudio",
+    "asio",
+    "glad",
+    "glfw3",
+    {
+      "name": "imgui",
+      "features": [
+        "glfw-binding",
+        "opengl3-binding"
+      ]
+    }
+  ]
+}

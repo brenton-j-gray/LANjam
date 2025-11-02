@@ -1,0 +1,58 @@
+Detecting compiler hash for triplet x64-windows...
+Compiler found: C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/cl.exe
+The following packages are already installed:
+    asio:x64-windows@1.32.0
+  * egl-registry:x64-windows@2024-01-25
+    glad[core,loader]:x64-windows@0.1.36
+    glfw3:x64-windows@3.4#1
+    imgui[core,glfw-binding,opengl3-binding]:x64-windows@1.91.9
+  * opengl-registry:x64-windows@2024-02-10#1
+    rtaudio:x64-windows@6.0.1#1
+  * vcpkg-cmake:x64-windows@2024-04-23
+  * vcpkg-cmake-config:x64-windows@2024-05-23
+asio provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(asio CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE asio::asio)
+
+asio provides pkg-config modules:
+
+  # A cross-platform C++ library for network and low-level I/O programming that provides developers with a consistent asynchronous model using a modern C++ approach.
+  asio
+
+glad provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(glad CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE glad::glad)
+
+glfw3 provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(glfw3 CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE glfw)
+
+glfw3 provides pkg-config modules:
+
+  # A multi-platform library for OpenGL, window and input
+  glfw3
+
+imgui provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(imgui CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE imgui::imgui)
+
+rtaudio provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(RtAudio CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE RtAudio::rtaudio)
+
+rtaudio provides pkg-config modules:
+
+  # RtAudio - a set of C++ classes that provide a common API for realtime audio input/output
+  rtaudio
+
+All requested installations completed successfully in: 1.48 ms
