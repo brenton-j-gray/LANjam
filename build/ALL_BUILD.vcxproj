@@ -190,6 +190,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{949DA2D9-50B0-3536-8273-A54D83867C9A}</Project>
       <Name>lan_jam_server</Name>
     </ProjectReference>
+    <ProjectReference Include="D:\Code\LANjam\build\lan_jam_server_gui.vcxproj">
+      <Project>{E4F561EB-55ED-36DF-8484-CD182C52E31A}</Project>
+      <Name>lan_jam_server_gui</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

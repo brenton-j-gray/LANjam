@@ -47,6 +47,7 @@ target_link_libraries(lan_jam_client PRIVATE core)
 add_executable(lan_jam_client_gui
   src/client/main_client_gui.cpp
   src/gui/GuiApp.cpp
+  src/gui/GuiStyle.cpp
 )
 target_link_libraries(lan_jam_client_gui PRIVATE
   core
@@ -57,4 +58,20 @@ target_link_libraries(lan_jam_client_gui PRIVATE
 
 if (WIN32)
   target_link_libraries(lan_jam_client_gui PRIVATE opengl32)
+endif()
+
+add_executable(lan_jam_server_gui
+  src/server/main_server_gui.cpp
+  src/server/ServerGuiApp.cpp
+  src/gui/GuiStyle.cpp
+)
+target_link_libraries(lan_jam_server_gui PRIVATE
+  core
+  imgui::imgui
+  glad::glad
+  glfw
+)
+
+if (WIN32)
+  target_link_libraries(lan_jam_server_gui PRIVATE opengl32)
 endif()

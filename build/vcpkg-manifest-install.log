@@ -55,4 +55,4 @@ rtaudio provides pkg-config modules:
   # RtAudio - a set of C++ classes that provide a common API for realtime audio input/output
   rtaudio
 
-All requested installations completed successfully in: 1.48 ms
+All requested installations completed successfully in: 587 us

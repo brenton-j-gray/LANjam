@@ -33,3 +33,23 @@ void AudioIO::close() {
     } catch (...) {}
   }
 }
+bool AudioIO::start() {
+  if (!audio_.isStreamOpen()) return false;
+  try {
+    if (!audio_.isStreamRunning()) audio_.startStream();
+    return true;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "RtAudio start error: %s\n", e.what());
+    return false;
+  }
+}
+bool AudioIO::stop() {
+  if (!audio_.isStreamOpen()) return false;
+  try {
+    if (audio_.isStreamRunning()) audio_.stopStream();
+    return true;
+  } catch (const std::exception& e) {
+    fprintf(stderr, "RtAudio stop error: %s\n", e.what());
+    return false;
+  }
+}

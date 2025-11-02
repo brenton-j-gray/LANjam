@@ -7,6 +7,8 @@ LANjam is a tiny LAN jam-session prototype that pairs an UDP fan-out server with
 - Simple jitter buffer to smooth network delivery.
 - RtAudio-backed output and synth voice for instant audio feedback.
 - Dear ImGui + GLFW front-end for realtime synth control.
+- On-screen piano with octave selector and transport start/stop for quick pitch control.
+- One-click LAN discovery button to find a server on your subnet.
 - Builds with CMake and vcpkg-managed dependencies (ASIO, RtAudio, ImGui, GLFW, GLAD).
 
 ## Prerequisites
@@ -26,7 +28,8 @@ If you want a Debug build, swap `Release` for `Debug`. The resulting binaries la
 
 ## Run It
 - `lan_jam_server`: Accepts a UDP port (default `50000`) and fans audio packets out to all connected peers.
-- `lan_jam_client_gui`: Launches the GUI client. Pick an address/port, click **Connect**, and tweak synth parameters live.
+- `lan_jam_server_gui`: GUI dashboard for the relay. Pick a port, start/stop the server, watch peers/logs in real time.
+- `lan_jam_client_gui`: Launches the GUI client. Pick an address/port, click **Connect**, and tweak synth parameters live. (Optional CLI: `lan_jam_client_gui.exe <server_ip> [port]` pre-fills and auto-connects.)
 - `lan_jam_client`: Legacy console client kept around for quick headless tests.
 
 ## Test Drive
@@ -48,7 +51,7 @@ Start a second client (another terminal):
 .\build\Release\lan_jam_client_gui.exe
 ```
 Click **Connect** in the second window. Now you'll hear your local saw plus a slightly delayed second saw (the "remote" one fanned out by the server).
-
+Use **Discover LAN** if you want the client to auto-find the server.
 Quit a client: close the GUI window or click **Quit**.  
 Quit the server: `Ctrl+C`.
 
@@ -63,16 +66,22 @@ Start the server:
 ```powershell
 .\build\Release\lan_jam_server.exe 50000
 ```
+Prefer a dashboard? Launch:
+```powershell
+.\build\Release\lan_jam_server_gui.exe
+```
+Pick a port in the GUI, press **Start Server**, and monitor peers/logs as clients connect.
 
 On each client machine (replace with your server's IP inside the GUI):
 ```powershell
 .\build\Release\lan_jam_client_gui.exe
 ```
 Enter the server IP (e.g. `192.168.1.42`), leave the port at `50000`, then click **Connect**.
-
+If you leave the port at `0`, **Discover LAN** fills in whatever port the server is broadcasting on.
+Or press **Discover LAN** to scan the subnet automatically.
 **Windows firewall tip**  
 First run may pop a firewall prompt for the server. Allow on Private networks.  
-If clients can't connect: Windows Security -> Firewall -> Allow an app -> let both lan_jam_server.exe and lan_jam_client_gui.exe through on Private.
+If clients can't connect: Windows Security -> Firewall -> Allow an app -> let both `lan_jam_server.exe` and `lan_jam_client_gui.exe` through on Private.
 
 ### C) Useful knobs (if audio crackles or is silent)
 - In src/audio/AudioIO.cpp, bump buffer from 128 -> 256 in open(48000, 128).

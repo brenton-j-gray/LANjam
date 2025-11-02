@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <cstring>
 #include <chrono>
+#include <string>
+#include <cmath>
+#include <algorithm>
 
 #include "common/UdpSocket.h"
 #include "common/JitterBuffer.h"
@@ -23,6 +26,12 @@ int main() {
   GuiState gui;
   gui.serverHost = "127.0.0.1";
   gui.serverPort = 50000;
+  for (int osc = 0; osc < 3; ++osc) {
+    gui.params.osc[osc].wave.store(0);
+    gui.params.osc[osc].octave.store(0);
+    gui.params.osc[osc].detune.store(0.0f);
+    gui.params.osc[osc].phase.store(osc == 0 ? 0.0f : osc * 120.0f);
+  }
 
   // Launch GUI in its own thread
   std::thread guiThread([&] { run_gui(gui); });
@@ -69,22 +78,31 @@ int main() {
   synth.set_sample_rate(48000.0);
 
   audio.set_callback([&](float* out, unsigned nframes) {
-    // Pull GUI params
-    synth.set_freq(gui.params.freq.load());
-    synth.set_wave(gui.params.waveform.load());
+    int baseOct = std::clamp(gui.params.octave.load(), 0, 8);
+    int note = std::clamp(gui.params.note.load(), 0, 11);
+    int midi = (baseOct + 1) * 12 + note;
+    float freq = 440.0f * std::pow(2.0f, (static_cast<float>(midi) - 69.0f) / 12.0f);
+    synth.set_freq(freq);
+    for (int osc = 0; osc < 3; ++osc) {
+      synth.set_osc_wave(osc, gui.params.osc[osc].wave.load());
+      synth.set_osc_octave(osc, gui.params.osc[osc].octave.load());
+      synth.set_osc_detune(osc, gui.params.osc[osc].detune.load());
+      synth.set_osc_phase(osc, gui.params.osc[osc].phase.load());
+    }
     synth.set_cutoff(gui.params.cutoff.load());
     synth.set_resonance(gui.params.resonance.load());
+    synth.set_filter_type(gui.params.filterType.load());
+    synth.set_filter_slope(gui.params.filterSlope.load());
     ctx.remoteGain.store(gui.params.remoteGain.load());
 
-    // Local synth
     synth.render(out, nframes);
 
-    // Remote mix
     std::vector<float> mix(nframes, 0.0f);
     size_t got = ctx.jitter.pop(mix.data(), nframes);
-    if (got) for (size_t i = 0; i < got; ++i) out[i] += ctx.remoteGain.load() * mix[i];
+    if (got) {
+      for (size_t i = 0; i < got; ++i) out[i] += ctx.remoteGain.load() * mix[i];
+    }
 
-    // Ship PCM block
     std::vector<uint8_t> bytes(nframes * sizeof(float));
     std::memcpy(bytes.data(), out, bytes.size());
     udp.send(bytes.data(), bytes.size());

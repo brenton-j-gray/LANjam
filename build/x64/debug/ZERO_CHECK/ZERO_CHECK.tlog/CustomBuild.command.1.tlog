@@ -1,0 +1,10 @@
+^D:\CODE\LANJAM\BUILD\CMAKEFILES\C9CEB214BE4C41B6C5C174EBFD4CB9F4\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Code/LANjam -BD:/Code/LANjam/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/Code/LANjam/build/lan_jam_synth.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

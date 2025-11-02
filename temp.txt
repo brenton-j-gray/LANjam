@@ -1,0 +1,357 @@
+#include <asio.hpp>
+#include <thread>
+#include <atomic>
+#include <vector>
+#include <cstdio>
+#include <cstring>
+#include <chrono>
+#include <exception>
+#include <algorithm>
+#include <cmath>
+#include <optional>
+#include <array>
+#include <string_view>
+
+#include "common/UdpSocket.h"
+#include "common/JitterBuffer.h"
+#include "audio/AudioIO.h"
+#include "audio/SynthVoice.h"
+#include "common/Discovery.h"
+#include "gui/GuiApp.h"
+
+using namespace std::chrono_literals;
+
+namespace {
+struct DiscoveryResult {
+  std::string host;
+  uint16_t port;
+};
+
+std::optional<DiscoveryResult> discover_server(uint16_t port, const std::atomic<bool>& quitFlag) {
+            try {
+              actualPort = static_cast<uint16_t>(std::stoi(std::string(view.substr(colon + 1))));
+            } catch (...) { /* ignore parse errors */ }
+    sock.open(asio::ip::udp::v4());
+    sock.set_option(asio::socket_base::reuse_address(true));
+    sock.set_option(asio::socket_base::broadcast(true));
+    sock.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), 0));
+    uint16_t targetPort = port ? port : kDiscoveryPort;
+    asio::ip::udp::endpoint broadcast(asio::ip::address_v4::broadcast(), targetPort);
+    sock.send_to(asio::buffer(kDiscoveryMsg, std::strlen(kDiscoveryMsg)), broadcast);
+    sock.non_blocking(true);
+
+    const auto deadline = std::chrono::steady_clock::now() + 800ms;
+    std::array<char, 128> buf{};
+
+    while (!quitFlag.load(std::memory_order_relaxed) &&
+           std::chrono::steady_clock::now() < deadline) {
+      asio::ip::udp::endpoint from;
+      asio::error_code ec;
+      size_t n = sock.receive_from(asio::buffer(buf), from, 0, ec);
+      if (!ec && n) {
+        std::string_view view(buf.data(), n);
+        if (view.rfind(kDiscoveryReplyPrefix, 0) == 0) {
+          uint16_t actualPort = from.port();
+          auto colon = view.find(':');
+          if (colon != std::string_view::npos) {
+            try {
+              actualPort = static_cast<uint16_t>(std::stoi(std::string(view.substr(colon + 1))));
+            } catch (...) {
+              // ignore parse errors
+            }
+          }
+          DiscoveryResult res;
+          res.host = from.address().to_string();
+          res.port = actualPort;
+          return res;
+        }
+      } else if (ec == asio::error::would_block || ec == asio::error::try_again) {
+        std::this_thread::sleep_for(30ms);
+        continue;
+      } else if (ec) {
+        break;
+      }
+    }
+    sock.close();
+  } catch (const std::exception& e) {
+    std::printf("Discovery error: %s\n", e.what());
+  }
+  return std::nullopt;
+}
+}
+
+struct ClientCtx {
+  JitterBuffer jitter;
+  std::atomic<float> remoteGain{0.5f};
+};
+
+int main(int argc, char** argv) {
+  GuiState gui;
+  gui.serverHost = "127.0.0.1";
+  gui.serverPort = 0;
+  gui.audioRunning.store(false);
+  if (argc > 1) {
+    gui.serverHost = argv[1];
+  }
+  if (argc > 2) {
+    try {
+      int port = std::stoi(argv[2]);
+      if (port > 0 && port <= 0xFFFF) {
+        gui.serverPort = static_cast<uint16_t>(port);
+      } else {
+        std::printf("Port %d out of range, defaulting to %u\n", port, gui.serverPort);
+      }
+    } catch (const std::exception& e) {
+      std::printf("Invalid port '%s': %s\n", argv[2], e.what());
+    }
+  }
+  if (argc > 1) {
+    gui.connectRequested.store(true);
+  }
+
+  asio::io_context io;
+  UdpSocket udp(io);
+  udp.bind_any(0);
+
+  ClientCtx ctx;
+  ctx.jitter.set_target_blocks(2);
+  std::atomic<bool> remoteReady{false};
+  std::atomic<bool> handshakePending{false};
+
+  // Simple RX loop
+  std::thread rx([&] {
+    std::vector<uint8_t> buf(1500);
+    asio::ip::udp::endpoint from;
+    while (!gui.quitRequested.load()) {
+      size_t n = 0;
+      try {
+        n = udp.recv(buf.data(), buf.size(), from);
+      } catch (const asio::system_error& se) {
+        if (se.code() == asio::error::connection_reset) {
+          continue;
+        }
+        if (se.code() == asio::error::operation_aborted) {
+          break;
+        }
+        if (!gui.quitRequested.load()) {
+          std::printf("UDP recv error: %s\n", se.what());
+        }
+        break;
+      } catch (const std::exception& e) {
+        if (!gui.quitRequested.load()) {
+          std::printf("UDP recv error: %s\n", e.what());
+        }
+        break;
+      }
+      if (!n) continue;
+      std::string_view sv(reinterpret_cast<char*>(buf.data()), n);
+      bool textControl = !sv.empty() && std::all_of(sv.begin(), sv.end(), [](unsigned char c){
+        return c >= 32 && c <= 126;
+      });
+      if (textControl && sv.rfind("LANJAM_", 0) == 0) {
+        if (sv == kWelcomeMsg && handshakePending.load()) {
+          auto expected = udp.remote_endpoint();
+          if (from.address() == expected.address()) {
+            uint16_t newPort = from.port();
+            handshakePending.store(false);
+            remoteReady.store(true);
+            gui.serverHost = expected.address().to_string();
+            gui.serverPort = newPort;
+            gui.hostDirty.store(true);
+            udp.set_remote(gui.serverHost, gui.serverPort);
+            {
+              std::lock_guard<std::mutex> lock(gui.discoveryMutex);
+              gui.discoveryMessage = "Connected to " + gui.serverHost + ":" + std::to_string(gui.serverPort);
+            }
+            gui.discoveryStatus.store(2);
+            std::printf("Handshake complete with %s:%u\n", gui.serverHost.c_str(), gui.serverPort);
+          } else {
+            std::printf("Ignoring welcome from unexpected %s:%u\n",
+              from.address().to_string().c_str(), from.port());
+          }
+        }
+        continue;
+      }
+      if (n % sizeof(float) != 0) continue;
+      size_t frames = n / sizeof(float);
+      std::vector<float> block(frames);
+      std::memcpy(block.data(), buf.data(), n);
+      ctx.jitter.push(block);
+      gui.stats.rxPackets.fetch_add(1);
+      gui.stats.jitterDepth.store(ctx.jitter.size()); // optional helper
+    }
+  });
+
+  // Connect when requested
+  std::thread netCtl([&] {
+    auto lastHello = std::chrono::steady_clock::time_point::min();
+    auto handshakeStart = std::chrono::steady_clock::time_point::min();
+    for (;;) {
+      if (gui.quitRequested.load()) break;
+      if (gui.connectRequested.exchange(false)) {
+      uint16_t requestedPort = gui.serverPort.load();
+      if (requestedPort == 0) {
+        { std::lock_guard<std::mutex> lock(gui.discoveryMutex); gui.discoveryMessage = "Auto-discovering server..."; }
+        gui.discoveryStatus.store(0);
+        gui.discoverRequested.store(true);
+        continue;
+      }
+        uint16_t targetPort = requestedPort;
+        udp.set_remote(gui.serverHost, targetPort);
+        gui.serverPort = targetPort;
+        remoteReady.store(false);
+        handshakePending.store(true);
+        lastHello = std::chrono::steady_clock::time_point::min();
+        handshakeStart = std::chrono::steady_clock::time_point::min();
+        std::printf("Set remote %s:%u (awaiting handshake)\n", gui.serverHost.c_str(), gui.serverPort);
+        {
+          std::lock_guard<std::mutex> lock(gui.discoveryMutex);
+          gui.discoveryMessage = "Waiting for server response...";
+        }
+        gui.discoveryStatus.store(1);
+      }
+      if (gui.discoverRequested.exchange(false)) {
+        if (!gui.discovering.exchange(true)) {
+          gui.discoveryStatus.store(0);
+          {
+            std::lock_guard<std::mutex> lock(gui.discoveryMutex);
+            gui.discoveryMessage = "Searching for LAN server...";
+            gui.discoveredHost.clear();
+          }
+          auto result = discover_server(gui.serverPort, gui.quitRequested);
+          if (result) {
+            gui.discoveryStatus.store(1);
+            remoteReady.store(false);
+            handshakePending.store(true);
+            lastHello = std::chrono::steady_clock::time_point::min();
+            handshakeStart = std::chrono::steady_clock::time_point::min();
+            gui.serverHost = result->host;
+            gui.serverPort = result->port;
+            gui.hostDirty.store(true);
+            {
+              std::lock_guard<std::mutex> lock(gui.discoveryMutex);
+              gui.discoveredHost = result->host;
+              gui.discoveryMessage = "Found server: " + result->host + ":" + std::to_string(result->port) + " (connecting)";
+            }
+            gui.connectRequested.store(true);
+          } else {
+            gui.discoveryStatus.store(-1);
+            handshakePending.store(false);
+            remoteReady.store(false);
+            {
+              std::lock_guard<std::mutex> lock(gui.discoveryMutex);
+              gui.discoveryMessage = "No LAN server discovered.";
+              gui.discoveredHost.clear();
+            }
+            gui.discovering.store(false);
+            continue;
+          }
+          gui.discovering.store(false);
+        }
+      }
+      if (handshakePending.load(std::memory_order_relaxed) && !gui.quitRequested.load()) {
+        auto now = std::chrono::steady_clock::now();
+        if (lastHello == std::chrono::steady_clock::time_point::min() || now - lastHello > 500ms) {
+          static constexpr char hello[] = kHelloMsg;
+          if (!udp.send(reinterpret_cast<const uint8_t*>(hello), sizeof(hello) - 1)) {
+            if (!gui.quitRequested.load()) {
+              std::lock_guard<std::mutex> lock(gui.discoveryMutex);
+              gui.discoveryMessage = "Handshake send failed. Retrying...";
+            }
+          }
+          lastHello = now;
+          if (handshakeStart == std::chrono::steady_clock::time_point::min()) {
+            handshakeStart = now;
+          }
+        }
+        if (handshakeStart != std::chrono::steady_clock::time_point::min() && now - handshakeStart > 3s) {
+          handshakePending.store(false);
+          remoteReady.store(false);
+          {
+            std::lock_guard<std::mutex> lock(gui.discoveryMutex);
+            gui.discoveryMessage = "No server response yet (check IP/port).";
+          }
+          gui.discoveryStatus.store(-1);
+          handshakeStart = std::chrono::steady_clock::time_point::min();
+        }
+      } else {
+        handshakeStart = std::chrono::steady_clock::time_point::min();
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+  });
+
+  // Audio
+  AudioIO audio;
+  SynthVoice synth;
+  synth.set_sample_rate(48000.0);
+  std::atomic<bool> audioActive{false};
+
+  audio.set_callback([&](float* out, unsigned nframes) {
+    if (!audioActive.load(std::memory_order_relaxed)) return;
+    // Pull GUI params
+    int octave = std::clamp(gui.params.octave.load(), 1, 7);
+    int note   = std::clamp(gui.params.note.load(), 0, 11);
+    int midi   = (octave + 1) * 12 + note;
+    float freq = 440.0f * std::pow(2.0f, (static_cast<float>(midi) - 69.0f) / 12.0f);
+    synth.set_freq(freq);
+    synth.set_wave(gui.params.waveform.load());
+    synth.set_cutoff(gui.params.cutoff.load());
+    synth.set_resonance(gui.params.resonance.load());
+    ctx.remoteGain.store(gui.params.remoteGain.load());
+
+    // Local synth
+    synth.render(out, nframes);
+
+    // Remote mix
+    std::vector<float> mix(nframes, 0.0f);
+    size_t got = ctx.jitter.pop(mix.data(), nframes);
+    if (got) for (size_t i = 0; i < got; ++i) out[i] += ctx.remoteGain.load() * mix[i];
+
+    // Ship PCM block
+    std::vector<uint8_t> bytes(nframes * sizeof(float));
+    std::memcpy(bytes.data(), out, bytes.size());
+    if (remoteReady.load(std::memory_order_relaxed) && !gui.quitRequested.load()) {
+      udp.send(bytes.data(), bytes.size());
+    }
+  });
+
+  std::thread audioCtl;
+  if (!audio.open(48000, 128)) {
+    std::printf("Audio open failed\n");
+    gui.quitRequested.store(true);
+    gui.audioRunning.store(false);
+  } else {
+    audioActive.store(true);
+    gui.audioRunning.store(true);
+    audioCtl = std::thread([&] {
+      for (;;) {
+        if (gui.quitRequested.load()) break;
+        if (gui.audioStopRequested.exchange(false)) {
+          if (audio.stop()) {
+            audioActive.store(false);
+            gui.audioRunning.store(false);
+          }
+        }
+        if (gui.audioStartRequested.exchange(false)) {
+          if (audio.start()) {
+            audioActive.store(true);
+            gui.audioRunning.store(true);
+          }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+    });
+  }
+
+  const int guiResult = run_gui(gui);
+  gui.quitRequested.store(true);
+  udp.close();
+  audioActive.store(false);
+  gui.audioRunning.store(false);
+  audio.close();
+  if (audioCtl.joinable()) audioCtl.join();
+  if (rx.joinable()) rx.join();
+  if (netCtl.joinable()) netCtl.join();
+  return guiResult;
+}

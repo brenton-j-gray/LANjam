@@ -383,6 +383,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="D:\Code\LANjam\src\client\main_client_gui.cpp" />
     <ClCompile Include="D:\Code\LANjam\src\gui\GuiApp.cpp" />
+    <ClCompile Include="D:\Code\LANjam\src\gui\GuiStyle.cpp" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

@@ -7,6 +7,9 @@
     <ClCompile Include="D:\Code\LANjam\src\gui\GuiApp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="D:\Code\LANjam\src\gui\GuiStyle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="D:\Code\LANjam\CMakeLists.txt" />

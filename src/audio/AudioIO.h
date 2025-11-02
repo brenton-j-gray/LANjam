@@ -9,6 +9,9 @@ public:
   bool open(unsigned sampleRate = 48000, unsigned frames = 128);
   void close();
   void set_callback(Callback cb) { cb_ = std::move(cb); }
+  bool is_running() const { return audio_.isStreamOpen() && audio_.isStreamRunning(); }
+  bool start();
+  bool stop();
 
 private:
   static int rt_cb(void* out, void* in, unsigned nFrames, double streamTime,
