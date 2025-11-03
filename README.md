@@ -68,3 +68,13 @@ For development use `Debug` instead of `Release`. Binaries are produced under `b
 - Expand synth features: LFOs, more waveforms, unison, effects.
 - Add MIDI input mapping and presets persistence.
 - Improve server-side mixing/metering and provide more network diagnostics in the GUI.
+
+## Screenshots
+
+![Synth overview](Screenshots/LANJamClientSynth.png)
+
+![Sequencer grid](Screenshots/LANJamClientSequencer.png)
+
+![Transport controls](Screenshots/LANJamClientTransport+Stats.png)
+
+![Server overview](Screenshots/LANJamServer.png)
