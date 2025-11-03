@@ -1,100 +1,70 @@
 # LANjam
 
-LANjam is a tiny LAN jam-session prototype that pairs an UDP fan-out server with lightweight clients that generate and exchange raw PCM audio frames. Each client renders a local synth voice for zero-latency monitoring while mixing in audio received from peers, giving you a feel for the eventual networked instrument.
+LANjam is a compact LAN jam-session prototype: a UDP relay server plus lightweight clients that synthesize and exchange raw PCM audio. Each client renders a local synth voice for zero-latency monitoring while mixing remote audio from peers.
 
-## Features
-- Low-latency UDP transport with minimal fan-out server.
-- Simple jitter buffer to smooth network delivery.
-- RtAudio-backed output and synth voice for instant audio feedback.
-- Dear ImGui + GLFW front-end for realtime synth control.
-- On-screen piano with octave selector and transport start/stop for quick pitch control.
-- One-click LAN discovery button to find a server on your subnet.
-- Builds with CMake and vcpkg-managed dependencies (ASIO, RtAudio, ImGui, GLFW, GLAD).
+This README has been updated to reflect the current app state (GUI layout, sequencer, polyphony, and discovery improvements).
+
+## Highlights / Current State
+- UDP fan-out relay server and a GUI server dashboard.
+- GUI client with a single anchored main window (no floating elements) built on Dear ImGui + GLFW.
+- Local synth with ADSR envelope, multiple oscillators, and a simple polyphonic voice pool (configurable poly count).
+- Sample-accurate sequencer (12 rows × 16 steps) driven from the audio callback. Steps can trigger multiple rows (chords).
+- Visual sequencer: active steps are shown in orange with a centered dot; active playhead column is highlighted.
+- Tempo control is a rotary BPM knob placed inline with Play/Stop/Restart and polyphony controls.
+- One-click LAN discovery to find servers on the subnet and resilient hostname resolution for manual connect.
+
+## Features (detailed)
+- Low-latency UDP transport with a lightweight fan-out relay server.
+- Simple jitter buffer and per-client mixing (server side).
+- Local zero-latency monitoring: clients synthesize locally and send raw PCM to the server.
+- Polyphony via an audio-thread voice pool with LRU stealing when voices are exhausted.
+- ADSR amplitude envelope exposed in the GUI.
+- Sample-accurate sequencer (audio-thread timing) with editable grid UI; supports chords.
+- GUI improvements: single, window-locked UI, rotary BPM knob, per-step visual feedback.
+- Build with CMake + vcpkg-managed dependencies (RtAudio, ImGui, GLFW, GLAD, Asio).
 
 ## Prerequisites
 - CMake 3.25+
-- A C++20 compiler (MSVC 2022, Clang 15+, or GCC 12+)
-- RtAudio and ASIO headers (fetched automatically via vcpkg)
-- [vcpkg](https://github.com/microsoft/vcpkg) (manifest mode) with `VCPKG_ROOT` exported in your environment
+- A C++20 compiler (MSVC 2022 recommended on Windows)
+- [vcpkg](https://github.com/microsoft/vcpkg) in manifest mode; set `VCPKG_ROOT` in your environment so CMake can find it
 
 ## Configure & Build
+From the repository root:
 ```powershell
-# From the repository root
+# Configure
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+# Build (Release)
 cmake --build build --config Release
 ```
 
-If you want a Debug build, swap `Release` for `Debug`. The resulting binaries land in `build/Release/` (or `build/Debug/`).
+For development use `Debug` instead of `Release`. Binaries are produced under `build/Release/` or `build/Debug/`.
 
-## Run It
-- `lan_jam_server`: Accepts a UDP port (default `50000`) and fans audio packets out to all connected peers.
-- `lan_jam_server_gui`: GUI dashboard for the relay. Pick a port, start/stop the server, watch peers/logs in real time.
-- `lan_jam_client_gui`: Launches the GUI client. Pick an address/port, click **Connect**, and tweak synth parameters live. (Optional CLI: `lan_jam_client_gui.exe <server_ip> [port]` pre-fills and auto-connects.)
-- `lan_jam_client`: Legacy console client kept around for quick headless tests.
+## Run
+- Server (headless): `lan_jam_server.exe <port>` (default 50000)
+- Server dashboard: `lan_jam_server_gui.exe`
+- GUI client: `lan_jam_client_gui.exe` (optionally `lan_jam_client_gui.exe <server_ip> [port]`)
+- Headless client: `lan_jam_client.exe`
 
-## Test Drive
-
-### A) Single-machine sanity check (localhost)
-Start the server (leave this window open):
+## Quick Test (single-machine)
+1. Start the server:
 ```powershell
 .\build\Release\lan_jam_server.exe 50000
 ```
-
-Start one client (new terminal):
+2. Start a client:
 ```powershell
 .\build\Release\lan_jam_client_gui.exe
 ```
-In the GUI window, leave the defaults (`127.0.0.1 / 50000`) and click **Connect**. You should hear a saw wave immediately (that's your local synth).
+3. In the GUI, connect to `127.0.0.1:50000` (or use Discover LAN). You should hear your local synth immediately.
+4. Start a second client to hear remote audio mixed in (slightly delayed) so you can validate network flow.
 
-Start a second client (another terminal):
-```powershell
-.\build\Release\lan_jam_client_gui.exe
-```
-Click **Connect** in the second window. Now you'll hear your local saw plus a slightly delayed second saw (the "remote" one fanned out by the server).
-Use **Discover LAN** if you want the client to auto-find the server.
-Quit a client: close the GUI window or click **Quit**.  
-Quit the server: `Ctrl+C`.
+## Notes & Tips
+- If audio glitches:
+	- Increase the audio buffer size in `src/audio/AudioIO.cpp` (e.g., 128 -> 256 frames).
+	- Lower synth gain in `src/audio/SynthVoice.cpp`.
+	- Prefer wired Ethernet for low jitter.
 
-### B) Two-machine LAN test
-On the server machine:
-```powershell
-ipconfig
-```
-Grab the IPv4 Address for your active adapter, e.g. `192.168.1.42`.
-
-Start the server:
-```powershell
-.\build\Release\lan_jam_server.exe 50000
-```
-Prefer a dashboard? Launch:
-```powershell
-.\build\Release\lan_jam_server_gui.exe
-```
-Pick a port in the GUI, press **Start Server**, and monitor peers/logs as clients connect.
-
-On each client machine (replace with your server's IP inside the GUI):
-```powershell
-.\build\Release\lan_jam_client_gui.exe
-```
-Enter the server IP (e.g. `192.168.1.42`), leave the port at `50000`, then click **Connect**.
-If you leave the port at `0`, **Discover LAN** fills in whatever port the server is broadcasting on.
-Or press **Discover LAN** to scan the subnet automatically.
-**Windows firewall tip**  
-First run may pop a firewall prompt for the server. Allow on Private networks.  
-If clients can't connect: Windows Security -> Firewall -> Allow an app -> let both `lan_jam_server.exe` and `lan_jam_client_gui.exe` through on Private.
-
-### C) Useful knobs (if audio crackles or is silent)
-- In src/audio/AudioIO.cpp, bump buffer from 128 -> 256 in open(48000, 128).
-- Lower synth gain in `src/audio/SynthVoice.cpp` (change `0.15f` down a notch).
-- Use wired Ethernet for cleaner jitter baseline.
-- Make sure the default output device in Windows matches where you expect sound.
-
-### D) What “good” looks like
-- One client: clean, immediate saw (zero-latency local monitor).
-- Two+ clients: same saw plus a slightly delayed second voice. Delay shrinks later when we add Opus + a smarter jitter buffer.
-
-## Roadmap Ideas
-- Encode audio with Opus to shrink bandwidth and jitter impact.
-- Replace the placeholder UDP fan-out with a stateful mixer.
-- Expose adjustable latency, gain staging, and device choices via CLI flags.
-- Harden the jitter buffer and add metrics so you can tune network performance.
+## Roadmap / Next Work
+- Add Opus encoding for bandwidth reduction and improved jitter handling.
+- Expand synth features: LFOs, more waveforms, unison, effects.
+- Add MIDI input mapping and presets persistence.
+- Improve server-side mixing/metering and provide more network diagnostics in the GUI.

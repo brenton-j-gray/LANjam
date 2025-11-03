@@ -82,6 +82,21 @@ void SynthVoice::updateCoefficients() {
   coeffDirty_ = false;
 }
 
+void SynthVoice::note_on() {
+  envStage_ = EnvAttack;
+  // calculate per-sample increment for attack
+  float attackSamples = std::max(1.0f, envAttack_ * static_cast<float>(sr_));
+  envInc_ = 1.0f / attackSamples;
+}
+
+void SynthVoice::note_off() {
+  // transition to release
+  envStage_ = EnvRelease;
+  float releaseSamples = std::max(1.0f, envRelease_ * static_cast<float>(sr_));
+  // envInc_ is negative for release
+  envInc_ = - (envLevel_ / releaseSamples);
+}
+
 void SynthVoice::render(float* out, unsigned nframes) {
   if (coeffDirty_) updateCoefficients();
 
@@ -118,6 +133,46 @@ void SynthVoice::render(float* out, unsigned nframes) {
       stageInput = y;
     }
 
-    out[i] += 0.15f * stageInput;
+    // Envelope processing (per-sample linear ramps)
+    switch (envStage_) {
+      case EnvIdle:
+        // keep envLevel_ at 0
+        break;
+      case EnvAttack: {
+        envLevel_ += envInc_;
+        if (envLevel_ >= 1.0f) {
+          envLevel_ = 1.0f;
+          envStage_ = EnvDecay;
+          float decaySamples = std::max(1.0f, envDecay_ * static_cast<float>(sr_));
+          // amount to go from 1.0 -> sustain
+          envInc_ = -(1.0f - envSustain_) / decaySamples;
+        }
+      } break;
+      case EnvDecay: {
+        envLevel_ += envInc_;
+        if (envLevel_ <= envSustain_) {
+          envLevel_ = envSustain_;
+          envStage_ = EnvSustain;
+          envInc_ = 0.0f;
+        }
+      } break;
+      case EnvSustain:
+        // hold at sustain
+        break;
+      case EnvRelease: {
+        envLevel_ += envInc_;
+        if (envLevel_ <= 0.0f) {
+          envLevel_ = 0.0f;
+          envStage_ = EnvIdle;
+          envInc_ = 0.0f;
+        }
+      } break;
+    }
+
+    out[i] += 0.15f * envLevel_ * stageInput;
   }
+}
+
+bool SynthVoice::is_active() const {
+  return envStage_ != EnvIdle || envLevel_ > 1e-6f;
 }

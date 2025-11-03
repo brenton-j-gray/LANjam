@@ -8,7 +8,21 @@ void UdpSocket::bind_any(uint16_t port) {
   sock_.bind(ep);
 }
 void UdpSocket::set_remote(const std::string& host, uint16_t port) {
-  remote_ = asio::ip::udp::endpoint(asio::ip::make_address(host), port);
+  try {
+    remote_ = asio::ip::udp::endpoint(asio::ip::make_address(host), port);
+  } catch (const std::exception&) {
+    // fallback: try DNS resolution for hostnames
+    try {
+      asio::ip::udp::resolver resolver(io_);
+      asio::ip::udp::resolver::results_type results = resolver.resolve(host, std::to_string(port));
+      if (results.begin() != results.end()) {
+        remote_ = *results.begin();
+      }
+    } catch (const std::exception& e) {
+      // leave remote_ unchanged on failure
+      std::fprintf(stderr, "UdpSocket::set_remote: failed to resolve %s:%u -> %s\n", host.c_str(), port, e.what());
+    }
+  }
 }
 void UdpSocket::close() {
   if (sock_.is_open()) {
@@ -29,5 +43,8 @@ bool UdpSocket::send_to(const uint8_t* data, size_t len, const asio::ip::udp::en
   return sent == static_cast<std::size_t>(len);
 }
 size_t UdpSocket::recv(uint8_t* buf, size_t maxlen, asio::ip::udp::endpoint& from) {
-  return sock_.receive_from(asio::buffer(buf, maxlen), from);
+  std::error_code ec;
+  size_t n = sock_.receive_from(asio::buffer(buf, maxlen), from, 0, ec);
+  if (ec) return 0;
+  return n;
 }

@@ -2,7 +2,7 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>D:\Code\LANjam\build\x64\Release\ZERO_CHECK</FullPath>
+      <FullPath>D:\Code\LANjam\build\x64\release\ZERO_CHECK</FullPath>
     </ProjectOutput>
     <ProjectOutput>
       <FullPath>D:\Code\LANjam\build\Release\lan_jam_server.exe</FullPath>

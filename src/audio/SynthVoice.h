@@ -52,6 +52,28 @@ private:
     FilterType filterType_ = FilterType::Low;
     int filterStages_ = 1;
 
+    // ADSR envelope
+    float envAttack_ = 0.01f;   // seconds
+    float envDecay_ = 0.1f;     // seconds
+    float envSustain_ = 0.8f;   // level 0..1
+    float envRelease_ = 0.2f;   // seconds
+    enum EnvStage { EnvIdle=0, EnvAttack=1, EnvDecay=2, EnvSustain=3, EnvRelease=4 };
+    EnvStage envStage_ = EnvIdle;
+    float envLevel_ = 0.0f;     // current envelope level 0..1
+    // per-sample increment used during attack/decay/release
+    float envInc_ = 0.0f;
+
+public:
+    // Envelope control
+    void set_env_attack(float s) { envAttack_ = std::max(0.0f, s); }
+    void set_env_decay(float s) { envDecay_ = std::max(0.0f, s); }
+    void set_env_sustain(float s) { envSustain_ = std::clamp(s, 0.0f, 1.0f); }
+    void set_env_release(float s) { envRelease_ = std::max(0.0f, s); }
+    void note_on();
+    void note_off();
+    // Returns true if the voice is currently producing sound (envelope not idle)
+    bool is_active() const;
+
     bool coeffDirty_ = true;
     float b0_ = 1.0f, b1_ = 0.0f, b2_ = 0.0f;
     float a1_ = 0.0f, a2_ = 0.0f;
