@@ -6,105 +6,19 @@
 #include <cstring>
 #include <chrono>
 #include <string>
-#include <cmath>
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <memory>
 
 #include "common/UdpSocket.h"
 #include "common/Discovery.h"
 #include "common/JitterBuffer.h"
 #include "audio/AudioIO.h"
-#include "audio/SynthVoice.h"
+#include "audio/IAudioRenderer.h"
+#include "audio/CpuPolyRenderer.h"
+#include "audio/CudaPolyRenderer.h"
 #include "gui/GuiApp.h"
-
-// Simple polyphonic voice pool used from the audio thread only
-struct Voice {
-  SynthVoice synth;
-  int note = -1; // 0..11, -1 idle
-  bool released = false; // note_off called
-  uint64_t lastUsed = 0; // for voice stealing
-};
-
-struct VoicePool {
-  std::vector<Voice> voices;
-  uint64_t tick = 0;
-
-  VoicePool(size_t n, double sr) { voices.resize(n); for (auto &v : voices) v.synth.set_sample_rate(sr); }
-  void resize(size_t n, double sr) {
-    voices.clear();
-    voices.resize(n);
-    for (auto &v : voices) v.synth.set_sample_rate(sr);
-    tick = 0;
-  }
-
-  void set_global_params_from_gui(const GuiState& gui) {
-    for (size_t i = 0; i < voices.size(); ++i) {
-      auto &v = voices[i];
-      for (int osc = 0; osc < 3; ++osc) {
-        v.synth.set_osc_wave(osc, gui.params.osc[osc].wave.load());
-        v.synth.set_osc_octave(osc, gui.params.osc[osc].octave.load());
-        v.synth.set_osc_detune(osc, gui.params.osc[osc].detune.load());
-        v.synth.set_osc_phase(osc, gui.params.osc[osc].phase.load());
-      }
-      v.synth.set_cutoff(gui.params.cutoff.load());
-      v.synth.set_resonance(gui.params.resonance.load());
-      v.synth.set_filter_type(gui.params.filterType.load());
-      v.synth.set_filter_slope(gui.params.filterSlope.load());
-      v.synth.set_env_attack(gui.params.envAttack.load());
-      v.synth.set_env_decay(gui.params.envDecay.load());
-      v.synth.set_env_sustain(gui.params.envSustain.load());
-      v.synth.set_env_release(gui.params.envRelease.load());
-    }
-  }
-
-  void note_on(int note, int octave) {
-    // choose free voice or steal oldest
-    Voice* choose = nullptr;
-    for (auto &v : voices) {
-      if (!v.synth.is_active() && v.note == -1) { choose = &v; break; }
-    }
-    if (!choose) {
-      // steal least recently used
-      uint64_t oldest = UINT64_MAX; size_t idx = 0;
-      for (size_t i = 0; i < voices.size(); ++i) {
-        if (voices[i].lastUsed < oldest) { oldest = voices[i].lastUsed; idx = i; }
-      }
-      choose = &voices[idx];
-    }
-    // init voice
-    choose->note = note;
-    choose->released = false;
-    choose->lastUsed = ++tick;
-    int midi = (octave + 1) * 12 + note;
-    float freq = 440.0f * std::pow(2.0f, (static_cast<float>(midi) - 69.0f) / 12.0f);
-    choose->synth.set_freq(freq);
-    choose->synth.note_on();
-  }
-
-  void note_off(int note) {
-    for (auto &v : voices) {
-      if (v.note == note && v.synth.is_active()) {
-        v.synth.note_off();
-        v.released = true;
-        // keep v.note until envelope finishes (we'll clear below)
-      }
-    }
-  }
-
-  void render_mixed(float* out, unsigned nframes) {
-    // mix all voices into out (synth.render adds into out)
-    for (auto &v : voices) {
-      if (v.synth.is_active()) {
-        v.synth.render(out, nframes);
-      } else {
-        // voice idle, clear note if it was released previously
-        if (v.note != -1 && v.released) {
-          v.note = -1;
-          v.released = false;
-        }
-      }
-    }
-  }
-};
 
 struct ClientCtx {
   std::atomic<bool> running{true};
@@ -112,6 +26,27 @@ struct ClientCtx {
   std::atomic<float> remoteGain{0.5f};
   std::atomic<uint32_t> xruns{0};
 };
+
+namespace {
+
+enum class AudioBackend {
+  Cpu,
+  Cuda
+};
+
+AudioBackend select_backend_from_env() {
+  const char* env = std::getenv("LANJAM_AUDIO_BACKEND");
+  if (!env) return AudioBackend::Cpu;
+
+  std::string value(env);
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  if (value == "cuda") return AudioBackend::Cuda;
+  return AudioBackend::Cpu;
+}
+
+}  // namespace
 
 int main() {
   GuiState gui;
@@ -145,7 +80,7 @@ int main() {
       size_t frames = n / sizeof(float);
       std::vector<float> block(frames);
       std::memcpy(block.data(), buf.data(), n);
-      ctx.jitter.push(block);
+      ctx.jitter.push(std::move(block));
       gui.stats.rxPackets.fetch_add(1);
       gui.stats.jitterDepth.store(ctx.jitter.size()); // optional helper
     }
@@ -226,14 +161,35 @@ int main() {
     }
   });
 
-  // Audio: create voice pool and wire to GUI gate/note
+  // Audio: create renderer backend and wire to GUI gate/note
   AudioIO audio;
   const size_t kVoiceCount = 8;
-  VoicePool vpool(kVoiceCount, 48000.0);
+  const AudioBackend selectedBackend = select_backend_from_env();
+  std::unique_ptr<IAudioRenderer> renderer;
+  if (selectedBackend == AudioBackend::Cuda) {
+    renderer = std::make_unique<CudaPolyRenderer>(kVoiceCount, 48000.0);
+    std::printf("Audio backend: CUDA (stub/fallback path for now)\n");
+  } else {
+    renderer = std::make_unique<CpuPolyRenderer>(kVoiceCount, 48000.0);
+    std::printf("Audio backend: CPU\n");
+  }
+#if defined(LANJAM_ENABLE_CUDA)
+#else
+  if (selectedBackend == AudioBackend::Cuda) {
+    std::printf("Note: binary built without LANJAM_ENABLE_CUDA; using CPU-equivalent renderer path.\n");
+  }
+#endif
+  if (!renderer) {
+    // Safety fallback.
+  renderer = std::make_unique<CpuPolyRenderer>(kVoiceCount, 48000.0);
+  }
 
   audio.set_callback([&](float* out, unsigned nframes) {
+    static thread_local std::vector<float> mix;
+    static thread_local std::vector<uint8_t> bytes;
+
     // zero output buffer
-    for (unsigned i = 0; i < nframes; ++i) out[i] = 0.0f;
+    std::memset(out, 0, static_cast<size_t>(nframes) * sizeof(float));
 
   // Sample-accurate sequencer handling (runs in audio thread)
     static const int kSeqRows = 12;
@@ -242,12 +198,10 @@ int main() {
     static double sampleAcc = 0.0; // leftover samples toward next step
     static uint64_t globalSamplePos = 0; // increasing sample counter
     static int currentStep = 0;
-    static bool seqOwnsGate = false;
     static uint64_t seqReleaseSample = 0;
-  int baseOct = std::clamp(gui.params.octave.load(), 0, 8);
-  int note = std::clamp(gui.params.note.load(), 0, 11);
-  bool playing = gui.sequencer.playing.load();
-  int bpm = gui.sequencer.bpm.load();
+    int baseOct = std::clamp(gui.params.octave.load(), 0, 8);
+    bool playing = gui.sequencer.playing.load();
+    int bpm = gui.sequencer.bpm.load();
     if (bpm <= 0) bpm = 120;
     double samplesPerStep = (sampleRate * 60.0) / static_cast<double>(bpm) / 4.0; // 16th notes
   static uint16_t seqReleaseMask = 0;
@@ -262,7 +216,7 @@ int main() {
         // trigger all rows set at this step (polyphonic step)
         for (int r = kSeqRows - 1; r >= 0; --r) {
           if (gui.sequencer.grid[r][currentStep].load()) {
-            vpool.note_on(r, baseOct);
+            renderer->note_on(r, baseOct);
             seqReleaseMask |= static_cast<uint16_t>(1u << r);
           }
         }
@@ -278,27 +232,35 @@ int main() {
     // process GUI note on/off requests (bitmasks) - consume and clear atomically
     uint16_t onReq = gui.noteOnRequests.exchange(0);
     if (onReq) {
-      for (int n = 0; n < 12; ++n) if (onReq & (1u << n)) vpool.note_on(n, baseOct);
+      for (int n = 0; n < 12; ++n) if (onReq & (1u << n)) renderer->note_on(n, baseOct);
     }
     uint16_t offReq = gui.noteOffRequests.exchange(0);
     if (offReq) {
-      for (int n = 0; n < 12; ++n) if (offReq & (1u << n)) vpool.note_off(n);
+      for (int n = 0; n < 12; ++n) if (offReq & (1u << n)) renderer->note_off(n);
     }
 
     // allow dynamic polyphony change requested by GUI
     int desired = std::clamp(gui.polyphony.load(), 1, 256);
-    if (static_cast<int>(vpool.voices.size()) != desired) {
-      vpool.resize(static_cast<size_t>(desired), 48000.0);
+    if (static_cast<int>(renderer->polyphony()) != desired) {
+      renderer->set_polyphony(static_cast<size_t>(desired));
     }
     // update voice params from GUI (cheap to do each callback)
-    vpool.set_global_params_from_gui(gui);
+    renderer->apply_gui_params(gui);
     // (old gate path removed - GUI now communicates note on/off via request bitmasks)
 
     // render voices into out
-    vpool.render_mixed(out, nframes);
+    renderer->render_mixed(out, nframes);
+    const auto renderStats = renderer->runtime_stats();
+    gui.stats.audioBackend.store(renderStats.backend);
+    gui.stats.activeVoices.store(renderStats.activeVoices);
+    gui.stats.cudaFallbacks.store(renderStats.fallbackCount);
+    gui.stats.cudaOverBudget.store(renderStats.overBudgetCount);
+    gui.stats.cudaLastRenderMs.store(renderStats.lastRenderMs);
+    gui.stats.cudaBudgetMs.store(renderStats.lastBudgetMs);
+    gui.stats.cudaFallbackLastBlock.store(renderStats.usedFallbackLastBlock);
 
     // mix remote audio
-    std::vector<float> mix(nframes, 0.0f);
+    if (mix.size() < nframes) mix.resize(nframes);
     size_t got = ctx.jitter.pop(mix.data(), nframes);
     if (got) {
       float rg = ctx.remoteGain.load();
@@ -306,15 +268,16 @@ int main() {
     }
 
     // send audio
-    std::vector<uint8_t> bytes(nframes * sizeof(float));
-    std::memcpy(bytes.data(), out, bytes.size());
-    udp.send(bytes.data(), bytes.size());
+    const size_t byteCount = static_cast<size_t>(nframes) * sizeof(float);
+    if (bytes.size() < byteCount) bytes.resize(byteCount);
+    std::memcpy(bytes.data(), out, byteCount);
+    udp.send(bytes.data(), byteCount);
 
     // advance sample position and handle sequencer note release timing
     globalSamplePos += nframes;
     if (seqReleaseMask != 0 && globalSamplePos >= seqReleaseSample) {
       // release all scheduled notes for that step
-      for (int n = 0; n < 12; ++n) if (seqReleaseMask & (1u << n)) vpool.note_off(n);
+      for (int n = 0; n < 12; ++n) if (seqReleaseMask & (1u << n)) renderer->note_off(n);
       seqReleaseMask = 0;
     }
   });

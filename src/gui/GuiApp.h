@@ -31,6 +31,13 @@ struct NetStats {
   std::atomic<uint32_t> rxPackets{0};
   std::atomic<uint32_t> xruns{0};
   std::atomic<size_t>   jitterDepth{0};
+  std::atomic<int>      audioBackend{0}; // 0=CPU, 1=CUDA
+  std::atomic<uint32_t> activeVoices{0};
+  std::atomic<uint32_t> cudaFallbacks{0};
+  std::atomic<uint32_t> cudaOverBudget{0};
+  std::atomic<float>    cudaLastRenderMs{0.0f};
+  std::atomic<float>    cudaBudgetMs{0.0f};
+  std::atomic<bool>     cudaFallbackLastBlock{false};
 };
 
 struct GuiState {

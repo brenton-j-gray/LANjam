@@ -1,1 +1,69 @@
+# Local / IDE (keep out of repo if desired)
 copilot-instructions.md
+
+# CMake / build trees
+out/
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+compile_commands.json
+Testing/
+
+# Visual Studio / MSBuild
+.vs/
+*.vcxproj.user
+*.vcxproj.filters.user
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.VC.opendb
+# Repo-root config folders (build output under out/ is already ignored)
+/x64/
+/Win32/
+/Debug/
+/Release/
+/RelWithDebInfo/
+/MinSizeRel/
+
+# vcpkg manifest mode (installed packages under project)
+vcpkg_installed/
+
+# Binaries & intermediates (when not under ignored dirs)
+*.exe
+*.dll
+*.lib
+*.pdb
+*.exp
+*.ilk
+*.obj
+*.iobj
+*.ipdb
+
+# CUDA / NVCC
+*.cubin
+*.fatbin
+*.gpu
+
+# ImGui / GLFW runtime state
+imgui.ini
+
+# OS junk
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# JetBrains / other IDEs
+.idea/
+
+# Logs / scratch
+*.log
+temp.txt

@@ -483,6 +483,42 @@ int run_gui(GuiState& shared) {
         ImGui::Text("RX packets: %u", shared.stats.rxPackets.load());
         ImGui::Text("Jitter depth: %zu blocks", shared.stats.jitterDepth.load());
         ImGui::Text("XRuns: %u", shared.stats.xruns.load());
+        const int backend = shared.stats.audioBackend.load();
+        ImGui::Text("Renderer: %s", backend == 1 ? "CUDA" : "CPU");
+        ImGui::Text("Active voices: %u", shared.stats.activeVoices.load());
+        if (backend == 1) {
+          const float lastMs = shared.stats.cudaLastRenderMs.load();
+          const float budgetMs = shared.stats.cudaBudgetMs.load();
+          ImGui::Text("CUDA render: %.3f ms / budget %.3f ms", lastMs, budgetMs);
+          ImGui::Text("CUDA fallbacks: %u (over budget: %u)",
+                      shared.stats.cudaFallbacks.load(),
+                      shared.stats.cudaOverBudget.load());
+          ImGui::Text("Fallback last block: %s",
+                      shared.stats.cudaFallbackLastBlock.load() ? "yes" : "no");
+
+          // Moving-average sparkline: GUI-thread EMA of last CUDA block time; history scrolls left (~2s at 60 Hz).
+          static constexpr int kCudaTimeGraphN = 120;
+          static float cudaTimeGraph[kCudaTimeGraphN]{};
+          static float cudaRenderMsEmaGui = 0.0f;
+          static bool cudaTimeGraphInit = false;
+          if (!cudaTimeGraphInit) {
+            cudaRenderMsEmaGui = lastMs;
+            for (int i = 0; i < kCudaTimeGraphN; ++i) cudaTimeGraph[i] = cudaRenderMsEmaGui;
+            cudaTimeGraphInit = true;
+          } else {
+            constexpr float kEmaAlpha = 0.12f;
+            cudaRenderMsEmaGui = (1.0f - kEmaAlpha) * cudaRenderMsEmaGui + kEmaAlpha * lastMs;
+          }
+          for (int i = 1; i < kCudaTimeGraphN; ++i) cudaTimeGraph[i - 1] = cudaTimeGraph[i];
+          cudaTimeGraph[kCudaTimeGraphN - 1] = cudaRenderMsEmaGui;
+
+          float ymax = budgetMs * 1.25f;
+          for (int i = 0; i < kCudaTimeGraphN; ++i) ymax = std::max(ymax, cudaTimeGraph[i]);
+          ymax = std::max(ymax, 0.05f);
+
+          ImGui::TextUnformatted("CUDA time (EMA, ms)");
+          ImGui::PlotLines("##cuda_time_ema", cudaTimeGraph, kCudaTimeGraphN, 0, nullptr, 0.0f, ymax, ImVec2(0.0f, 48.0f));
+        }
 
         ImGui::EndTabItem();
       }

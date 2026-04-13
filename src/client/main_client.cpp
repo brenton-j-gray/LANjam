@@ -2,6 +2,8 @@
 #include <thread>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 #include "common/UdpSocket.h"
 #include "common/JitterBuffer.h"
 #include "audio/AudioIO.h"
@@ -42,7 +44,7 @@ int main(int argc, char** argv) {
       size_t frames = n / sizeof(float);
       std::vector<float> block(frames);
       std::memcpy(block.data(), buf.data(), n);
-      ctx.jitter.push(block);
+      ctx.jitter.push(std::move(block));
     }
   });
 
@@ -51,11 +53,14 @@ int main(int argc, char** argv) {
   SynthVoice synth;
   synth.set_sample_rate(48000.0);
   audio.set_callback([&](float* out, unsigned nframes){
+    static thread_local std::vector<float> mix;
+    static thread_local std::vector<uint8_t> bytes;
+
     // 1) Local synth
     synth.render(out, nframes);
 
     // 2) Mix in remote
-    std::vector<float> mix(nframes, 0.0f);
+    if (mix.size() < nframes) mix.resize(nframes);
     size_t got = ctx.jitter.pop(mix.data(), nframes);
     if (got) {
       for (size_t i = 0; i < got; ++i) out[i] += 0.5f * mix[i];
@@ -63,9 +68,10 @@ int main(int argc, char** argv) {
 
     // 3) Ship current block as PCM
     // Copy out to tx buffer to avoid racing
-    std::vector<uint8_t> bytes(nframes * sizeof(float));
-    std::memcpy(bytes.data(), out, bytes.size());
-    udp.send(bytes.data(), bytes.size());
+    const size_t byteCount = static_cast<size_t>(nframes) * sizeof(float);
+    if (bytes.size() < byteCount) bytes.resize(byteCount);
+    std::memcpy(bytes.data(), out, byteCount);
+    udp.send(bytes.data(), byteCount);
   });
   if (!audio.open(48000, 128)) {
     printf("Failed to open audio\n");

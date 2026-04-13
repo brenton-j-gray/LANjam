@@ -10,6 +10,7 @@ endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(LANJAM_ENABLE_CUDA "Build CUDA prototype kernels" OFF)
 
 # Asio standalone uses header-only
 find_path(ASIO_INCLUDE_DIRS "asio.hpp")
@@ -33,6 +34,9 @@ add_library(core
   src/common/JitterBuffer.cpp
   src/audio/AudioIO.cpp
   src/audio/SynthVoice.cpp
+  src/audio/CpuPolyRenderer.cpp
+  src/audio/CudaPolyRenderer.cpp
+  src/audio/CudaVoiceKernelStub.cpp
 )
 target_include_directories(core PUBLIC src)
 
@@ -74,4 +78,23 @@ target_link_libraries(lan_jam_server_gui PRIVATE
 
 if (WIN32)
   target_link_libraries(lan_jam_server_gui PRIVATE opengl32)
+endif()
+
+if(LANJAM_ENABLE_CUDA)
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+  target_compile_definitions(core PUBLIC LANJAM_ENABLE_CUDA=1)
+  add_library(lanjam_cuda_kernels OBJECT
+    src/audio/CudaVoiceKernel.cu
+  )
+  target_include_directories(lanjam_cuda_kernels PRIVATE src)
+  target_compile_definitions(lanjam_cuda_kernels PRIVATE LANJAM_ENABLE_CUDA=1)
+  set_target_properties(lanjam_cuda_kernels PROPERTIES
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    CUDA_ARCHITECTURES native
+  )
+  set_property(TARGET core PROPERTY CUDA_ARCHITECTURES native)
+  target_sources(core PRIVATE $<TARGET_OBJECTS:lanjam_cuda_kernels>)
+  target_link_libraries(core PRIVATE CUDA::cudart)
 endif()

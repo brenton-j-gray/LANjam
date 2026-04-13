@@ -1,5 +1,5 @@
 {
-  "name": "lan-jam-synth",
+  "name": "lan-jam",
   "version": "0.1.0",
   "dependencies": [
     "rtaudio",
