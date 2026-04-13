@@ -42,11 +42,38 @@ target_include_directories(core PUBLIC src)
 
 target_link_libraries(core PRIVATE ${RTAUDIO_LIBRARY})
 
+# vcpkg often provides RtAudio (and GLFW) as DLLs; Windows does not search next to the .lib,
+# so copy runtime DLLs next to each executable we ship from this project.
+if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+  file(TO_CMAKE_PATH "${VCPKG_INSTALLED_DIR}" LANJAM_VCPKG_INSTALLED)
+  set(LANJAM_VCPKG_BIN "${LANJAM_VCPKG_INSTALLED}/${VCPKG_TARGET_TRIPLET}/bin")
+  set(LANJAM_VCPKG_DEBUG_BIN "${LANJAM_VCPKG_INSTALLED}/${VCPKG_TARGET_TRIPLET}/debug/bin")
+endif()
+
+function(lanjam_copy_dll_from_vcpkg target dll_basename)
+  if(NOT WIN32 OR NOT DEFINED LANJAM_VCPKG_BIN)
+    return()
+  endif()
+  set(_dll_dbg "${LANJAM_VCPKG_DEBUG_BIN}/${dll_basename}.dll")
+  set(_dll_rel "${LANJAM_VCPKG_BIN}/${dll_basename}.dll")
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      -D "DLL_DBG=${_dll_dbg}"
+      -D "DLL_REL=${_dll_rel}"
+      -D "OUT_DIR=$<TARGET_FILE_DIR:${target}>"
+      -D "DLL_NAME=${dll_basename}.dll"
+      -D "CFG=$<CONFIG>"
+      -P "${CMAKE_SOURCE_DIR}/cmake/CopyVcpkgDll.cmake"
+    VERBATIM)
+endfunction()
+
 add_executable(lan_jam_server src/server/main_server.cpp)
 target_link_libraries(lan_jam_server PRIVATE core)
+lanjam_copy_dll_from_vcpkg(lan_jam_server rtaudio)
 
 add_executable(lan_jam_client src/client/main_client.cpp)
 target_link_libraries(lan_jam_client PRIVATE core)
+lanjam_copy_dll_from_vcpkg(lan_jam_client rtaudio)
 
 add_executable(lan_jam_client_gui
   src/client/main_client_gui.cpp
@@ -63,6 +90,8 @@ target_link_libraries(lan_jam_client_gui PRIVATE
 if (WIN32)
   target_link_libraries(lan_jam_client_gui PRIVATE opengl32)
 endif()
+lanjam_copy_dll_from_vcpkg(lan_jam_client_gui rtaudio)
+lanjam_copy_dll_from_vcpkg(lan_jam_client_gui glfw3)
 
 add_executable(lan_jam_server_gui
   src/server/main_server_gui.cpp
@@ -79,6 +108,8 @@ target_link_libraries(lan_jam_server_gui PRIVATE
 if (WIN32)
   target_link_libraries(lan_jam_server_gui PRIVATE opengl32)
 endif()
+lanjam_copy_dll_from_vcpkg(lan_jam_server_gui rtaudio)
+lanjam_copy_dll_from_vcpkg(lan_jam_server_gui glfw3)
 
 if(LANJAM_ENABLE_CUDA)
   enable_language(CUDA)
